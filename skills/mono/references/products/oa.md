@@ -637,7 +637,7 @@ Flags:
    · 单班次 → 展示 planTip 确认
    · 多班次 → 列出 planTip 供用户选择；推荐项排序：① 意图词匹配（用户所说日期+上午/下午/上班/下班与候选 workDate/checkType 对应）② 异常班次就近（先过滤查询时刻落在 timeRange 内的候选，再取其中非 freeCheck 且 timeResult≠Normal 者按 |查询时刻−checkDateTime| 最小）③ 其余
    · 意图词唯一命中时可自动选定，但选定 planTip 必须并入后续表单值/汇总确认显式展示供否决；无意图词、意图匹配不唯一、或 freeCheck 候选无 checkDateTime 可就近 → 必须手选（不得默认取首个）
-   · 推荐话术简明：只展示意图词命中依据与最终补卡时刻（如「意图词（08-20 + 下午→下班）唯一命中；最终补卡时刻 08-20 18:00」），planId、timeRange 夹取等技术细节不进用户话术
+   · 话术硬约束：面向用户的班次澄清/确认一律只含意图词命中依据与最终补卡时刻（如「意图词（08-20 + 下午→下班）唯一命中；最终补卡时刻 08-20 18:00」），选项标签用 planTip 原文；planId、workDate、checkType、timeResult、freeCheck、timeRange 夹取等技术字段与英文枚举不得进入用户话术（交互组件描述同理）
    · 硬底线：create-instance 前用户至少见过一次选定班次的 planTip——推荐排序只优化问的顺序，选定权始终在用户
    · 选定班次的 supplyDate 越出其 timeRange[0]/[1] 时，夹取到最近边界作为最终补卡时刻，并告知用户修正后的时刻
 5.【收集理由】按 form-schema 的 required 判定：必填则缺失必问，非必填未提供可跳过
