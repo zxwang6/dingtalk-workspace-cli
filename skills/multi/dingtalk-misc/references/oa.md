@@ -580,7 +580,7 @@ Flags:
    · 无 DDHolidayField → 降级普通表单流程（简单模式 --form-values 发起，无需步骤 5/6）
 3.【先类型】dws attendance approve leave-types（--user 可选，缺省当前用户；代提交用其 userId）
    · 自动匹配：用户已明确类型词时匹配返回的 leaveName，唯一命中直接用
-   · 无类型词、未命中或含糊 → 展示全部可用类型供选择，不预筛子集；选项格式：【类型名称】 (剩余 X 天/小时)，X 取 balance.remainQuota，单位取 quotaUnit 中文映射（day/halfDay→天、hour→小时）；无余额对象或 balanceHidden=true 时不追加括号（不展示“余额不可见”类文案）；选中后剩余≤0 → 提示「你的XX余额已用完」并终止，按 X 计（X 取 leaveViewUnit 中文映射）；面向用户的展示一律用中文文案，不得出现 hour/halfDay/day 等英文枚举
+   · 无类型词、未命中或含糊 → 展示全部可用类型供选择，不预筛子集；选项格式：【类型名称】 (剩余 X 天/小时)，X 取 balance.remainQuota，单位取 quotaUnit 中文映射（day/halfDay→天、hour→小时）；无余额对象或 balanceHidden=true 时不追加括号（不展 示“余额不可见”类文案）；选中后剩余≤0 → 提示「你的XX余额已用完」并终止，按 X 计（X 取 leaveViewUnit 中文映射）；面向用户的展示一律用中文文案，不得出现 hour/halfDay/day 等英文枚举；「全部」是硬约束：宿主交互组件选项数上限 < 类型总数时，禁止挑“代表性子集”，必须放弃该组件改用纯文本/表格列出全量后由用户回复类型名；选项主标识必须是【类型名称】原文，不得截断、省略或被余额/状态描述取代
    · 类型一经确定，leaveCode 取自同一条目（与 leaveName 同源）
    · 哺乳假判定：类型条目 bizType === "breastfeeding_leave_new" → 明确拒绝并引导客户端（用步骤 1 的 submitUrl）；bizType 缺失时回退名称含「哺乳」；证明材料判定：leaveCertificate（enable/unit/duration/promptInformation）在 leave-types 响应中直接返回；enable=true 时步骤 5 拿到时长后**双向换算为小时**比较——阈值：leaveCertificate.unit=day → duration×24、hour → duration 原值；用户时长：unit ∈ {hour,halfHour,limitHour} → durationInHour 原值（**不乘 24**）、day/halfDay → durationInDay×24；时长 ≥ 阈值则同样拒绝并引导客户端
 4.【再时间 + 事由】按选定类型的 leaveViewUnit 格式化起止时间；同时收集请假事由（按 form-schema 的 required 判定：必填则缺失必问，非必填未提供可跳过）
