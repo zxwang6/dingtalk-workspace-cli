@@ -332,7 +332,7 @@ Flags:
 | 已拿到 Schema | 向用户展示控件列表，收集表单值 |
 | 已收集表单值 | `forecast-process` 预测流程走向 |
 | 预测返回有 `targetSelect: true` 节点 | 让用户为自选节点选人（`dws aisearch person --query "<姓名>" --dimension name --format json` 解析姓名） |
-| 预测完成，自选节点已选人 | 汇总确认后 `create-instance --yes` |
+| 预测完成，自选节点已选人 | 汇总确认后 `create-instance` |
 | 用户明确说"不走模板流程，直接指定审批人" | 使用 `directAppointedApprovers`（高级模式） |
 
 #### 工作流
@@ -344,7 +344,7 @@ Flags:
 4. 收集表单值                       → 向用户展示控件列表，收集用户填写的表单值
 5. forecast-process                  → 根据表单值预测流程走向，识别自选节点
 6. 自选节点选人                       → 若预测返回 targetSelect=true 的节点，让用户选人（用 dws aisearch person --query "<姓名>" --dimension name --format json 解析姓名）
-7. 汇总确认后 create-instance --yes  → 展示完整信息（表单值 + 流程路径 + 审批人），用户确认后执行发起
+7. 汇总确认后 create-instance → 展示完整信息（表单值 + 流程路径 + 审批人），用户确认后执行发起
 ```
 
 > **IMPORTANT：每次发起实例前都必须重新调用 `form-schema` 查询模板。** 即使用户之前查询过同一个 processCode，模板可能已被修改（控件增减、选项变更、必填属性调整等），不得复用旧的 Schema 结果。
@@ -377,13 +377,13 @@ Usage:
   dws oa approval create-instance [flags]
 Example:
   # 简单发起（Agent 在汇总确认后需加 --yes）
-  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试内容"}' --yes
+  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试内容"}'
   # 指定审批人（OR=或签，AND=会签，NONE=单人）
-  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试"}' --approvers "userId1,userId2" --approvers-action-type OR --yes
+  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试"}' --approvers "userId1,userId2" --approvers-action-type OR
   # 指定抄送人
-  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试"}' --cc-list "userId1" --cc-position START --yes
+  dws oa approval create-instance --process-code PROC-xxx --form-values '{"单行输入框":"测试"}' --cc-list "userId1" --cc-position START
   # 高级用法：传入完整 JSON（支持 directAppointedApprovers、targetSelectActioners 等全部字段）
-  dws oa approval create-instance --request '{"processCode":"PROC-xxx","deptId":-1,"formComponentValues":[{"name":"单行输入框","value":"测试"}]}' --yes
+  dws oa approval create-instance --request '{"processCode":"PROC-xxx","deptId":-1,"formComponentValues":[{"name":"单行输入框","value":"测试"}]}'
 Flags:
       --process-code string              审批模板 processCode（简单模式必填）
       --form-values string               表单值 JSON，格式 '{"控件名称":"值"}'（简单模式必填）
@@ -894,15 +894,15 @@ Flags:
   - 在 `form-schema` 之后、`create-instance` 之前调用
   - 返回的 `workflowActivityRuleVOs` 中 `targetSelect: true` 的节点需要用户自选审批人
   - 自选结果组装为 `targetSelectActioners` 传入 `create-instance`
-用户说"请假/请X天假/请年假/请事假/请病假/提交请假/帮我请假" → 请假套件发起流程（见「发起请假审批」章节）：① `dws attendance +get-approve-template --type leave` 定位请假模板（不走 search-forms）→ ② `form-schema` 识别 DDHolidayField → ③ `attendance approve leave-types` 选定假期类型 → ④ 收集起止时间与请假事由 → ⑤ `leave-duration` 计算时长 → ⑥ `leave-check` 提交前校验 → ⑦ 组装套件条目（id/value/extValue）→ ⑧ 复用发起审批实例第 5-7 步（forecast → 选人 → `create-instance --request --yes`）
+用户说"请假/请X天假/请年假/请事假/请病假/提交请假/帮我请假" → 请假套件发起流程（见「发起请假审批」章节）：① `dws attendance +get-approve-template --type leave` 定位请假模板（不走 search-forms）→ ② `form-schema` 识别 DDHolidayField → ③ `attendance approve leave-types` 选定假期类型 → ④ 收集起止时间与请假事由 → ⑤ `leave-duration` 计算时长 → ⑥ `leave-check` 提交前校验 → ⑦ 组装套件条目（id/value/extValue）→ ⑧ 复用发起审批实例第 5-7 步（forecast → 选人 → `create-instance --request`）
 
-用户说"补卡/忘打卡/补打卡/帮我补上次的卡" → 补卡套件发起流程（见「发起补卡审批」章节）：① `dws attendance +get-approve-template --type repair-check` 定位补卡模板（不走 search-forms）→ ② `form-schema` 下钻 DDBizSuite(attendance.supply) 子控件 → ③（可选）`attendance record get` 定位缺卡 → ④ `supply-plans` 匹配异常班次（空则终止；多班次用户选）→ ⑤ 收集补卡理由（按 form-schema required）→ ⑥ `supply-check` 资格校验 → ⑦ 组装子控件条目（id/format value/extValue 班次数据）→ ⑧ 复用发起审批实例第 5-7 步（forecast → 选人 → `create-instance --request --yes`）
-用户说"发起审批/提交审批/帮我发起XX审批/新建审批单/提一个XX审批/帮我提XX申请" → 五步流程：① `search-forms --query XX` 获取 processCode（请假除外，见上一条）→ ② `form-schema --process-code <code>` 获取表单字段定义 → ③ 阅读 [oa-form-components.md](oa/oa-form-components.md) 和 [oa-process-nodes.md](oa/oa-process-nodes.md) 后组装表单值 → ④ `forecast-process` 预测流程走向并识别自选节点 → ⑤ 若有自选节点让用户选人，确认后 `create-instance --yes` 发起
+用户说"补卡/忘打卡/补打卡/帮我补上次的卡" → 补卡套件发起流程（见「发起补卡审批」章节）：① `dws attendance +get-approve-template --type repair-check` 定位补卡模板（不走 search-forms）→ ② `form-schema` 下钻 DDBizSuite(attendance.supply) 子控件 → ③（可选）`attendance record get` 定位缺卡 → ④ `supply-plans` 匹配异常班次（空则终止；多班次用户选）→ ⑤ 收集补卡理由（按 form-schema required）→ ⑥ `supply-check` 资格校验 → ⑦ 组装子控件条目（id/format value/extValue 班次数据）→ ⑧ 复用发起审批实例第 5-7 步（forecast → 选人 → `create-instance --request`）
+用户说"发起审批/提交审批/帮我发起XX审批/新建审批单/提一个XX审批/帮我提XX申请" → 五步流程：① `search-forms --query XX` 获取 processCode（请假除外，见上一条）→ ② `form-schema --process-code <code>` 获取表单字段定义 → ③ 阅读 [oa-form-components.md](oa/oa-form-components.md) 和 [oa-process-nodes.md](oa/oa-process-nodes.md) 后组装表单值 → ④ `forecast-process` 预测流程走向并识别自选节点 → ⑤ 若有自选节点让用户选人，确认后 `create-instance` 发起
   - 如果用户已知 processCode，可跳过第①步
   - `--form-values` 的 key 必须与 `form-schema` 返回的控件 label 一致
   - `forecast-process` 返回自选节点时必须让用户选人，不得跳过
   - 执行前**必须向用户确认**表单内容、流程预测结果、审批人和抄送人
-  - 示例："帮我发起一个AI审批单" → ① `search-forms --query AI` → ② `form-schema --process-code <code>` → ③ 组装表单值 → ④ `forecast-process` → ⑤ 向用户确认流程走向和自选审批人后 `create-instance --yes`
+  - 示例："帮我发起一个AI审批单" → ① `search-forms --query AI` → ② `form-schema --process-code <code>` → ③ 组装表单值 → ④ `forecast-process` → ⑤ 向用户确认流程走向和自选审批人后 `create-instance`
 用户说"我有哪些待审的任务" → `approval tasks`
 用户说"我发起的审批单" -> `approval list-submitted`
 用户说"我审批/处理过的审批单" -> `approval list-executed`
@@ -981,11 +981,11 @@ dws oa approval form-schema --process-code <code> --format json
 dws oa approval forecast-process --process-code <code> --dept-id -1 --form-values '{"单行输入框":"测试内容"}' --format json
 # 18e. 若 forecast 返回 targetSelect=true 的节点，用 dws aisearch person --query "<姓名>" --dimension name --format json 帮用户选人
 # 18f. 发起审批实例（form-values 的 key 须与 Schema 中控件 label 一致）
-dws oa approval create-instance --process-code <code> --form-values '{"单行输入框":"测试内容"}' --yes --format json
+dws oa approval create-instance --process-code <code> --form-values '{"单行输入框":"测试内容"}' --format json
 # 18g. 发起并指定审批人和抄送人
-dws oa approval create-instance --process-code <code> --form-values '{"单行输入框":"测试"}' --approvers "userId1,userId2" --approvers-action-type OR --cc-list "userId3" --cc-position START --yes --format json
+dws oa approval create-instance --process-code <code> --form-values '{"单行输入框":"测试"}' --approvers "userId1,userId2" --approvers-action-type OR --cc-list "userId3" --cc-position START --format json
 # 18h. 发起并使用 forecast 自选审批人结果（高级模式）
-dws oa approval create-instance --request '{"processCode":"PROC-xxx","deptId":-1,"formComponentValues":[{"name":"单行输入框","value":"测试"}],"targetSelectActioners":[{"actionerKey":"manual_33ff_89cb_da91_e3aa","actionerStaffIds":["userId_选人A"]}]}' --yes --format json
+dws oa approval create-instance --request '{"processCode":"PROC-xxx","deptId":-1,"formComponentValues":[{"name":"单行输入框","value":"测试"}],"targetSelectActioners":[{"actionerKey":"manual_33ff_89cb_da91_e3aa","actionerStaffIds":["userId_选人A"]}]}' --format json
 
 # 19. 发起请假（请假套件 DDHolidayField；步骤 1-8 特有，9-10 复用 #18 的 forecast → 选人 → 发起）
 # 19a. 定位请假模板（approveType=LEAVE 精确返回，不走 search-forms）
@@ -1000,7 +1000,7 @@ dws attendance approve leave-duration --leave-code <leaveCode> --start "2026-08-
 dws attendance approve leave-check --leave-code <leaveCode> --process-code <code> --start "2026-08-13 09:00" --end "2026-08-14 18:00" --duration-day 1.65 --duration-hour 14.87 --format json
 # 19f. 组装 --request payload（套件条目 {id, name, value六元数组, extValue} + 请假事由等其余控件条目；
 #     extValue = JSON.stringify({...19d响应, key: leaveCode, leaveParams: [corpId, leaveCode, T1, T2, staffId]})）
-# 19g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后追加 --yes 发起
+# 19g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后发起
 dws oa approval create-instance --request @payload.json --format json
 
 # 20. 发起补卡（补卡套件 DDBizSuite·attendance.supply；步骤 1-7 特有，8-9 复用 #18 的 forecast → 选人 → 发起）
@@ -1015,7 +1015,7 @@ dws attendance approve supply-plans --time "2026-08-10 09:00" --format json
 # 20e. 提交前校验（--timestamp 取最终补卡时刻：选定班次 supplyDate，越界用 timeRange 夹取值；qualify=false → 转告 title/desc 并终止）
 dws attendance approve supply-check --timestamp <supplyDate> --format json
 # 20f. 组装 --request payload（套件子控件条目 {"id","name":子控件label,"value":按 format 格式化的时间,"extValue":班次数据 JSON} + 补卡理由条目（是否必收按 form-schema required））
-# 20g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后追加 --yes 发起
+# 20g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后发起
 dws oa approval create-instance --request @payload.json --format json
 ```
 
