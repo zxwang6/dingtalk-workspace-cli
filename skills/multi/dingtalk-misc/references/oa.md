@@ -600,7 +600,7 @@ Flags:
    · corpId 取步骤 5 响应回显；本人发起 staffId=null
 9.【流程预演（可选）】forecast-process --request（高级模式：套件条目无法用 --form-values 简单模式承载；--request 下 formComponentValues 与 create-instance 同形态即可，无需手动包二维，实测兼容）
 10.【选人 + 确认 + 发起】复用「发起审批实例」第 6-7 步：自选节点选人（targetSelectActioners 并入 payload）
-    → 汇总确认（表单值 + 流程路径 + 审批人）→ create-instance --request @payload.json
+    → 汇总确认（表单值 + 流程路径 + 审批人）→ create-instance --request '<组装后的完整 JSON>'
 ```
 
 时间格式（与模板 unit 硬绑定）：
@@ -656,7 +656,7 @@ Flags:
    + 理由条目 {"id": 理由控件id, "name": "补卡理由", "value": "<用户输入>"}
 8.【流程预演（可选）】forecast-process --request（高级模式：套件条目无法用 --form-values 简单模式承载；--request 下 formComponentValues 与 create-instance 同形态即可，无需手动包二维，实测兼容）
 9.【选人 + 确认 + 发起】复用「发起审批实例」第 6-7 步：自选节点选人（targetSelectActioners 并入 payload）
-   → 汇总确认（表单值 + 流程路径 + 审批人）→ create-instance --request @payload.json
+   → 汇总确认（表单值 + 流程路径 + 审批人）→ create-instance --request '<组装后的完整 JSON>'
 ```
 
 > **IMPORTANT：** 班次匹配与资格判定一律以服务端（supply-plans / supply-check）为准；value 必须按子控件 `format` 格式化（禁硬编码）；步骤 9 必须走 `--request` 高级模式。流程与选人无补卡特有逻辑，一律按「发起审批实例」第 5-7 步及其执行摘要执行。
@@ -1043,10 +1043,10 @@ dws attendance approve leave-types --format json
 dws attendance approve leave-duration --leave-code <leaveCode> --start "2026-08-13 09:00" --end "2026-08-14 18:00" --format json
 # 19e. 提交前校验（duration-day/hour 取自 19d 输出；success=false → 转告 errorMsg 并终止）
 dws attendance approve leave-check --leave-code <leaveCode> --process-code <code> --start "2026-08-13 09:00" --end "2026-08-14 18:00" --duration-day 1.65 --duration-hour 14.87 --format json
-# 19f. 组装 --request payload（套件条目 {id, name, value六元数组, extValue} + 请假事由等其余控件条目；
+# 19f. 组装 payload（套件条目 {id, name, value六元数组, extValue} + 请假事由等其余控件条目；
 #     extValue = JSON.stringify({...19d响应, key: leaveCode, leaveParams: [corpId, leaveCode, T1, T2, staffId]})）
 # 19g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后发起
-dws oa approval create-instance --request @payload.json --format json
+dws oa approval create-instance --request '<步骤 19f 组装后的完整 JSON>' --format json
 
 # 20. 发起补卡（补卡套件 DDBizSuite·attendance.supply；步骤 1-7 特有，8-9 复用 #18 的 forecast → 选人 → 发起）
 # 20a. 定位补卡模板（approveType=REPAIR_CHECK 精确返回，不走 search-forms）
@@ -1059,9 +1059,9 @@ dws attendance record get --user <userId> --date 2026-08-10 --format json
 dws attendance approve supply-plans --time "2026-08-10 09:00" --format json
 # 20e. 提交前校验（--timestamp 取最终补卡时刻：选定班次 supplyDate，越界用 timeRange 夹取值；qualify=false → 转告 title/desc 并终止）
 dws attendance approve supply-check --timestamp <supplyDate> --format json
-# 20f. 组装 --request payload（套件子控件条目 {"id","name":子控件label,"value":按 format 格式化的时间,"extValue":班次数据 JSON} + 补卡理由条目（是否必收按 form-schema required））
+# 20f. 组装 payload（套件子控件条目 {"id","name":子控件label,"value":按 format 格式化的时间,"extValue":班次数据 JSON} + 补卡理由条目（是否必收按 form-schema required））
 # 20g. 复用 #18d-18h：forecast-process --request 预演 → 自选节点选人 → 汇总确认后发起
-dws oa approval create-instance --request @payload.json --format json
+dws oa approval create-instance --request '<步骤 20f 组装后的完整 JSON>' --format json
 ```
 
 ## 上下文传递表
