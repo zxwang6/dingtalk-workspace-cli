@@ -569,7 +569,7 @@ Flags:
 ```
 1.【模板定位】dws attendance +get-approve-template --type leave
    → 请假模板列表（formName / processCode / submitUrl）
-   · 单模板直接选定；多模板按用户假期词（年假/事假…）匹配 formName 排序供选择
+   · 单模板直接选定；多模板时必须交由用户选择，Agent 不得自行选定（按用户假期词匹配 formName 排序仅影响展示顺序，不改变选择权）；交互组件选项数上限 < 模板总数时改用纯文本/表格列出全量后由用户回复模板名
    · 返回空 → 告知用户企业未配置可发起的请假模板
    · submitUrl 仅作兜底（CLI 不支持的模板引导客户端提交）
 2.【模板详情】dws oa approval form-schema --process-code <code>
@@ -623,7 +623,7 @@ Flags:
 ```
 1.【模板定位】dws attendance +get-approve-template --type repair-check
    → 补卡模板列表（formName / processCode / submitUrl）
-   · 单模板直接选定；多模板将名称与"补卡"最匹配的通用模板排前供选择
+   · 单模板直接选定；多模板时必须交由用户选择，Agent 不得自行选定（名称与“补卡”最匹配的通用模板排前仅影响展示顺序，不改变选择权）；交互组件选项数上限 < 模板总数时改用纯文本/表格列出全量后由用户回复模板名
    · 返回空 → 告知用户企业未配置可发起的补卡模板
    · submitUrl 仅作兜底（CLI 不支持的模板引导客户端提交）
 2.【模板详情】dws oa approval form-schema --process-code <code>
