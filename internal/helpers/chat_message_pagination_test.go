@@ -570,6 +570,13 @@ func TestChatMessagePaginationPageAllAggregatesSevenCommands(t *testing.T) {
 				if len(items) != 1 || len(messages) != 2 {
 					t.Fatalf("conversation items = %#v", items)
 				}
+				for i, wantID := range []string{"m1", "m2"} {
+					message, ok := messages[i].(map[string]any)
+					if !ok || message["messageId"] != wantID || message["openMessageId"] != wantID ||
+						message["conversationId"] != "cid1" {
+						t.Fatalf("projected nested message %d = %#v", i, messages[i])
+					}
+				}
 				if tt.name == "search" {
 					projected, ok := got["messages"].([]any)
 					if !ok || len(projected) != 2 {
@@ -585,8 +592,18 @@ func TestChatMessagePaginationPageAllAggregatesSevenCommands(t *testing.T) {
 						}
 					}
 				}
-			} else if len(items) != 2 {
-				t.Fatalf("items = %#v", items)
+			} else {
+				if len(items) != 2 {
+					t.Fatalf("items = %#v", items)
+				}
+				if tt.name == "list-focused" {
+					for i, wantID := range []string{"m1", "m2"} {
+						message, ok := items[i].(map[string]any)
+						if !ok || message["messageId"] != wantID || message["openMessageId"] != wantID {
+							t.Fatalf("projected focused message %d = %#v", i, items[i])
+						}
+					}
+				}
 			}
 			if len(caller.calls) != 2 {
 				t.Fatalf("calls = %#v, want two pages", caller.calls)

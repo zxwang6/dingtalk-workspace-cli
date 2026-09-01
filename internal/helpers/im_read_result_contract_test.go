@@ -293,8 +293,136 @@ func TestCrossPlatformCoverageChatMessageSearchProjectsStableFieldsAndPreservesL
 	if !ok || len(legacyGroups) != 1 {
 		t.Fatalf("legacy result.conversationMessagesList = %#v", legacy["conversationMessagesList"])
 	}
+	nestedMessages, ok := legacyGroups[0].(map[string]any)["messages"].([]any)
+	if !ok || len(nestedMessages) != 1 || !reflect.DeepEqual(nestedMessages[0], message) {
+		t.Fatalf("nested search messages = %#v, want projected top-level message %#v", nestedMessages, message)
+	}
 	if legacy["nextCursor"] != "cursor-2" {
 		t.Fatalf("legacy result.nextCursor = %#v", legacy["nextCursor"])
+	}
+}
+
+func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		args     []string
+		payload  string
+		message  func(map[string]any) map[string]any
+	}{
+		{
+			name:     "direct list",
+			toolName: "list_individual_chat_message",
+			args:     []string{"message", "list-direct", "--user", "user-1", "--time", "2026-07-14 00:00:00"},
+			payload:  `{"result":{"messages":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}}`,
+			message: func(payload map[string]any) map[string]any {
+				return payload["result"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			},
+		},
+		{
+			name:     "all messages",
+			toolName: "search_messages_by_time_range",
+			args:     []string{"message", "list-all"},
+			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","title":"项目群","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
+			message:  firstGroupedChatMessage,
+		},
+		{
+			name:     "messages by sender",
+			toolName: "search_messages_by_sender",
+			args:     []string{"message", "list-by-sender", "--sender-user-id", "user-1"},
+			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
+			message:  firstGroupedChatMessage,
+		},
+		{
+			name:     "mentions",
+			toolName: "search_at_me_message",
+			args:     []string{"message", "list-mentions"},
+			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
+			message:  firstGroupedChatMessage,
+		},
+		{
+			name:     "focused messages",
+			toolName: "list_special_focus_messages",
+			args:     []string{"message", "list-focused"},
+			payload:  `{"result":{"messages":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}],"hasMore":false}}`,
+			message: func(payload map[string]any) map[string]any {
+				return payload["result"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			},
+		},
+		{
+			name:     "advanced search",
+			toolName: "search_messages",
+			args:     []string{"message", "search-advanced", "--query", "正文"},
+			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
+			message:  firstGroupedChatMessage,
+		},
+		{
+			name:     "messages by ids",
+			toolName: "list_messages_by_ids",
+			args:     []string{"message", "list-by-ids", "--msg-ids", "msg-1"},
+			payload:  `{"result":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}`,
+			message: func(payload map[string]any) map[string]any {
+				return payload["result"].([]any)[0].(map[string]any)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caller := &imReadResultCaller{responses: map[string]string{tt.toolName: tt.payload}}
+			got, err := executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand, tt.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(got), &payload); err != nil {
+				t.Fatalf("decode command output: %v\noutput: %s", err, got)
+			}
+			if _, exists := payload["messages"]; exists {
+				t.Fatalf("atomic command added a redundant top-level messages collection: %#v", payload)
+			}
+			message := tt.message(payload)
+			if message["messageId"] != "msg-1" || message["openMessageId"] != "msg-1" ||
+				message["conversationId"] != "cid-1" || message["text"] != "正文" || message["legacy"] != "keep" {
+				t.Fatalf("projected message = %#v", message)
+			}
+		})
+	}
+}
+
+func firstGroupedChatMessage(payload map[string]any) map[string]any {
+	result := payload["result"].(map[string]any)
+	group := result["conversationMessagesList"].([]any)[0].(map[string]any)
+	return group["messages"].([]any)[0].(map[string]any)
+}
+
+func TestCrossPlatformCoverageChatAtomicQuerySendStatusProjectsWorkflow(t *testing.T) {
+	const payload = `{"result":{"taskId":"task-1","openMessageId":"msg-1","openConversationId":"cid-1","status":"SUCCESS"},"traceId":"trace-1"}`
+	caller := &imReadResultCaller{responses: map[string]string{"query_message_send_status": payload}}
+
+	got, err := executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand,
+		"message", "query-send-status", "--open-task-id", "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("decode command output: %v\noutput: %s", err, got)
+	}
+	if result["traceId"] != "trace-1" || result["readyForMessageActions"] != true || result["openTaskId"] != "task-1" {
+		t.Fatalf("projected send status = %#v", result)
+	}
+	messageRef, _ := result["messageRef"].(map[string]any)
+	if messageRef["openMessageId"] != "msg-1" || messageRef["openConversationId"] != "cid-1" {
+		t.Fatalf("messageRef = %#v", messageRef)
+	}
+	nextActions, _ := result["nextActions"].([]any)
+	if len(nextActions) != 3 {
+		t.Fatalf("nextActions = %#v", result["nextActions"])
+	}
+	raw, _ := result["result"].(map[string]any)
+	if raw["status"] != "SUCCESS" || raw["taskId"] != "task-1" {
+		t.Fatalf("raw send status was not preserved: %#v", raw)
 	}
 }
 
