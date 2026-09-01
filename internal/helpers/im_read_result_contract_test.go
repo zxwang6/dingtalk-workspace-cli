@@ -109,6 +109,29 @@ func TestCrossPlatformCoverageChatMessageReadsPreserveToolOperationOnCallerError
 	if len(caller.calls) != 1 || caller.calls[0] != (imReadResultCall{productID: "chat", toolName: "list_individual_chat_message"}) {
 		t.Fatalf("chat message list-direct calls = %#v, want chat/list_individual_chat_message", caller.calls)
 	}
+
+	for _, tt := range []struct {
+		name      string
+		toolName  string
+		arguments []string
+	}{
+		{name: "im message collection", toolName: "list_messages_by_ids", arguments: []string{"message", "list-by-ids", "--msg-ids", "msg-1"}},
+		{name: "im send status", toolName: "query_message_send_status", arguments: []string{"message", "query-send-status", "--open-task-id", "task-1"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			caller := &imReadResultCaller{errors: map[string]error{tt.toolName: errors.New("dial tcp: connection refused")}}
+			got, err := executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand, tt.arguments...)
+			if err == nil {
+				t.Fatalf("command unexpectedly succeeded with output %q", got)
+			}
+			if !errors.As(err, &cliErr) || cliErr.Operation != "im/"+tt.toolName {
+				t.Fatalf("error = %#v, want operation im/%s", err, tt.toolName)
+			}
+			if len(caller.calls) != 1 || caller.calls[0] != (imReadResultCall{productID: "im", toolName: tt.toolName}) {
+				t.Fatalf("calls = %#v, want im/%s", caller.calls, tt.toolName)
+			}
+		})
+	}
 }
 
 func (*imReadResultCaller) Format() string { return "json" }
@@ -752,6 +775,33 @@ func TestCrossPlatformCoverageChatMessageListDryRunKeepsPreviewPath(t *testing.T
 	}
 	if preview["dry_run"] != true || preview["executed"] != false || preview["tool"] != "list_individual_chat_message" {
 		t.Fatalf("list-direct dry-run preview = %#v", preview)
+	}
+
+	for _, tt := range []struct {
+		name      string
+		toolName  string
+		arguments []string
+	}{
+		{name: "im message collection", toolName: "list_messages_by_ids", arguments: []string{"message", "list-by-ids", "--msg-ids", "msg-1"}},
+		{name: "im send status", toolName: "query_message_send_status", arguments: []string{"message", "query-send-status", "--open-task-id", "task-1"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			caller := &imReadResultCaller{dryRun: true}
+			got, err := executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand, tt.arguments...)
+			if err != nil {
+				t.Fatalf("dry-run returned error: %v", err)
+			}
+			if len(caller.calls) != 0 {
+				t.Fatalf("dry-run calls = %#v, want none", caller.calls)
+			}
+			preview := map[string]any{}
+			if err := json.Unmarshal([]byte(got), &preview); err != nil {
+				t.Fatalf("decode dry-run output: %v\noutput: %s", err, got)
+			}
+			if preview["dry_run"] != true || preview["executed"] != false || preview["tool"] != tt.toolName {
+				t.Fatalf("dry-run preview = %#v", preview)
+			}
+		})
 	}
 }
 

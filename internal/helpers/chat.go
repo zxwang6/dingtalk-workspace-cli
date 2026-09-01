@@ -88,37 +88,73 @@ func promoteLegacyChatString(cmd *cobra.Command, canonical, legacy string) error
 }
 
 func callProjectedChatMessages(cmd *cobra.Command, toolName string, args map[string]any, search bool) error {
-	return callProjectedChatPayload(cmd, "chat", toolName, args, func(data map[string]any) map[string]any {
+	if deps.Caller.DryRun() {
+		return callMCPToolOnServer("chat", toolName, args)
+	}
+	text, err := callMCPToolReturnTextOnServer(cmd.Context(), "chat", toolName, args)
+	if err != nil {
+		return withProjectedChatOperation("chat/"+toolName, err)
+	}
+	return writeProjectedChatPayload(cmd, "chat/"+toolName, text, func(data map[string]any) map[string]any {
 		return projectChatMessagesPayload(data, search)
 	})
 }
 
-func callProjectedAtomicChatMessages(cmd *cobra.Command, serverID, toolName string, args map[string]any) error {
-	return callProjectedChatPayload(cmd, serverID, toolName, args, projectExistingChatMessageCollections)
+func callProjectedAtomicChatMessages(cmd *cobra.Command, toolName string, args map[string]any) error {
+	if deps.Caller.DryRun() {
+		return callMCPToolOnServer("chat", toolName, args)
+	}
+	text, err := callMCPToolReturnTextOnServer(cmd.Context(), "chat", toolName, args)
+	if err != nil {
+		return withProjectedChatOperation("chat/"+toolName, err)
+	}
+	return writeProjectedChatPayload(cmd, "chat/"+toolName, text, projectExistingChatMessageCollections)
 }
 
-func callProjectedChatPayload(
+func callProjectedAtomicIMMessages(cmd *cobra.Command, toolName string, args map[string]any) error {
+	if deps.Caller.DryRun() {
+		return callMCPToolOnServer("im", toolName, args)
+	}
+	text, err := callMCPToolReturnTextOnServer(cmd.Context(), "im", toolName, args)
+	if err != nil {
+		return withProjectedChatOperation("im/"+toolName, err)
+	}
+	return writeProjectedChatPayload(cmd, "im/"+toolName, text, projectExistingChatMessageCollections)
+}
+
+func callProjectedIMMessageSendStatus(cmd *cobra.Command, openTaskID string) error {
+	const toolName = "query_message_send_status"
+	args := map[string]any{"openTaskId": openTaskID}
+	if deps.Caller.DryRun() {
+		return callMCPToolOnServer("im", toolName, args)
+	}
+	text, err := callMCPToolReturnTextOnServer(cmd.Context(), "im", toolName, args)
+	if err != nil {
+		return withProjectedChatOperation("im/"+toolName, err)
+	}
+	return writeProjectedChatPayload(cmd, "im/"+toolName, text, func(data map[string]any) map[string]any {
+		return chatmsg.ProjectMessageSendStatus(data, openTaskID)
+	})
+}
+
+func withProjectedChatOperation(operation string, err error) error {
+	var cliErr *CLIError
+	if errors.As(err, &cliErr) && cliErr.Operation == "" {
+		withOperation := *cliErr
+		withOperation.Operation = operation
+		return &withOperation
+	}
+	return err
+}
+
+func writeProjectedChatPayload(
 	cmd *cobra.Command,
-	serverID, toolName string,
-	args map[string]any,
+	operation, text string,
 	project func(map[string]any) map[string]any,
 ) error {
-	if deps.Caller.DryRun() {
-		return callMCPToolOnServer(serverID, toolName, args)
-	}
-	text, err := callMCPToolReturnTextOnServer(cmd.Context(), serverID, toolName, args)
-	if err != nil {
-		var cliErr *CLIError
-		if errors.As(err, &cliErr) && cliErr.Operation == "" {
-			withOperation := *cliErr
-			withOperation.Operation = strings.TrimPrefix(serverID+"/"+toolName, "/")
-			return &withOperation
-		}
-		return err
-	}
 	if strings.TrimSpace(text) == "" {
 		return apperrors.NewAPI("MCP read tool returned no non-empty text content",
-			apperrors.WithOperation(strings.TrimPrefix(serverID+"/"+toolName, "/")),
+			apperrors.WithOperation(operation),
 			apperrors.WithOrigin("mcp"),
 			apperrors.WithFailureStage("response_validation"),
 			apperrors.WithRetryable(true),
@@ -1306,9 +1342,17 @@ func pagedProjectedChatSearchConfig(cmd *cobra.Command, toolName string, build f
 	return cfg
 }
 
-func pagedProjectedAtomicChatMessagesConfig(cmd *cobra.Command, fallbackServerID string, cfg PagedMCPCommandConfig) PagedMCPCommandConfig {
+func pagedProjectedAtomicChatMessagesConfig(cmd *cobra.Command, cfg PagedMCPCommandConfig) PagedMCPCommandConfig {
 	cfg.Fallback = func(args map[string]any) error {
-		return callProjectedAtomicChatMessages(cmd, fallbackServerID, cfg.ToolName, args)
+		return callProjectedAtomicChatMessages(cmd, cfg.ToolName, args)
+	}
+	cfg.ProjectResult = projectExistingChatMessageCollections
+	return cfg
+}
+
+func pagedProjectedAtomicIMMessagesConfig(cmd *cobra.Command, cfg PagedMCPCommandConfig) PagedMCPCommandConfig {
+	cfg.Fallback = func(args map[string]any) error {
+		return callProjectedAtomicIMMessages(cmd, cfg.ToolName, args)
 	}
 	cfg.ProjectResult = projectExistingChatMessageCollections
 	return cfg
@@ -3362,7 +3406,7 @@ func newChatCommand() *cobra.Command {
 			if v, err := cmd.Flags().GetInt("limit"); err == nil && v > 0 {
 				toolArgs["limit"] = v
 			}
-			return callProjectedAtomicChatMessages(cmd, "chat", "list_individual_chat_message", toolArgs)
+			return callProjectedAtomicChatMessages(cmd, "list_individual_chat_message", toolArgs)
 		},
 	}
 	DeclareLeafMetadata(chatMessageListDirectCmd, LeafSpec{
@@ -4194,7 +4238,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-all --start "2025-03-01 00:00:00" --end "2025-03-31 23:59:59" --limit 50 --cursor "abc123token"
   dws chat message list-all --start "2025-03-01 00:00:00" --end "2025-03-31 23:59:59" --limit 100 --page-all --page-limit 20 --max-items 500 --page-delay 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd,
 				pagedChatConversationMessagesConfig("search_messages_by_time_range", chatMessageListAllArgs)))
 		},
 	}
@@ -4245,7 +4289,7 @@ func newChatCommand() *cobra.Command {
   # 查询 userId: dws contact user search --query "姓名"
   # 查询 openDingTalkId: dws contact user search --query "姓名"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd,
 				pagedChatConversationMessagesConfig("search_messages_by_sender", chatMessageListBySenderArgs)))
 		},
 	}
@@ -4296,7 +4340,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-mentions --conversation-id <openconversation_id> --start "2026-03-10T00:00:00+08:00" --end "2026-03-11T00:00:00+08:00" --limit 50 --page-all --max-items 200 --page-delay 0
   # 查询群 ID: dws chat search --query "群名"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd,
 				pagedChatConversationMessagesConfig("search_at_me_message", chatMessageListMentionsArgs)))
 		},
 	}
@@ -4344,7 +4388,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-focused --limit 20 --cursor <nextCursor>
   dws chat message list-focused --limit 50 --page-all --page-limit 10 --page-delay 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd,
 				pagedChatMessagesInt64Config("list_special_focus_messages", chatMessageListFocusedArgs)))
 		},
 	}
@@ -4551,7 +4595,7 @@ func newChatCommand() *cobra.Command {
 			conversationIDs := parseCSVValues(flagOrFallback(cmd, "conversation-ids", "groups", "group"))
 			return runConversationScopedPagedMessageSearch(
 				cmd,
-				pagedProjectedAtomicChatMessagesConfig(cmd, "im",
+				pagedProjectedAtomicIMMessagesConfig(cmd,
 					pagedChatConversationMessagesOnServerConfig("im", "search_messages", chatMessageSearchAdvancedArgs)),
 				"openConversationIds",
 				conversationIDs,
@@ -4622,11 +4666,7 @@ chat message edit 或 chat message recall 的 --message-id 和 --conversation-id
 				return err
 			}
 			openTaskID := mustGetFlag(cmd, "open-task-id")
-			return callProjectedChatPayload(cmd, "im", "query_message_send_status", map[string]any{
-				"openTaskId": openTaskID,
-			}, func(data map[string]any) map[string]any {
-				return chatmsg.ProjectMessageSendStatus(data, openTaskID)
-			})
+			return callProjectedIMMessageSendStatus(cmd, openTaskID)
 		},
 	}
 	DeclareLeafMetadata(chatMessageQuerySendStatusCmd, LeafSpec{
@@ -6095,7 +6135,7 @@ chat message edit 或 chat message recall 的 --message-id 和 --conversation-id
 			if len(msgIds) > 50 {
 				return fmt.Errorf("--msg-ids 最多支持 50 条，当前 %d 条", len(msgIds))
 			}
-			return callProjectedAtomicChatMessages(cmd, "im", "list_messages_by_ids", map[string]any{
+			return callProjectedAtomicIMMessages(cmd, "list_messages_by_ids", map[string]any{
 				"openMsgIds": msgIds,
 			})
 		},
