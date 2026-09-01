@@ -94,6 +94,18 @@ func TestCrossPlatformCoverageChatMessageReadsPreserveToolOperationOnCallerError
 	if got != "" {
 		t.Fatalf("chat message list output = %q, want no success payload", got)
 	}
+
+	caller = &imReadResultCaller{errors: map[string]error{
+		"list_individual_chat_message": errors.New("dial tcp: connection refused"),
+	}}
+	got, err = executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand,
+		"message", "list-direct", "--user", "user-1", "--time", "2026-07-14 00:00:00")
+	if err == nil {
+		t.Fatalf("chat message list-direct unexpectedly succeeded with output %q", got)
+	}
+	if !errors.As(err, &cliErr) || cliErr.Operation != "list_individual_chat_message" {
+		t.Fatalf("chat message list-direct error = %#v", err)
+	}
 }
 
 func (*imReadResultCaller) Format() string { return "json" }
@@ -396,6 +408,57 @@ func firstGroupedChatMessage(payload map[string]any) map[string]any {
 	return group["messages"].([]any)[0].(map[string]any)
 }
 
+func TestCrossPlatformCoverageChatMessageProjectionHandlesSupportedAndUnsupportedShapes(t *testing.T) {
+	payload := map[string]any{
+		"messages": []map[string]any{{
+			"messageId": "canonical-top", "text": "top text",
+		}},
+		"conversationMessagesList": []map[string]any{{
+			"openConversationId": "group-cid",
+			"title":              "group title",
+			"singleChat":         true,
+			"messages": []map[string]any{{
+				"messageId": "canonical-group", "text": "group text",
+				"conversationTitle": "message title", "singleChat": false,
+			}},
+		}},
+		"result": []map[string]any{{
+			"openMessageId": "legacy-result", "content": "result text",
+		}},
+	}
+
+	projected := projectExistingChatMessageCollections(payload)
+	top := projected["messages"].([]any)[0].(map[string]any)
+	if top["openMessageId"] != "canonical-top" || top["content"] != "top text" {
+		t.Fatalf("canonical-only top message = %#v", top)
+	}
+	group := projected["conversationMessagesList"].([]any)[0].(map[string]any)
+	grouped := group["messages"].([]any)[0].(map[string]any)
+	if grouped["openConversationId"] != "group-cid" || grouped["conversationTitle"] != "message title" ||
+		grouped["singleChat"] != false || grouped["openMessageId"] != "canonical-group" ||
+		grouped["content"] != "group text" {
+		t.Fatalf("group-context message = %#v", grouped)
+	}
+	result := projected["result"].([]any)[0].(map[string]any)
+	if result["messageId"] != "legacy-result" || result["text"] != "result text" {
+		t.Fatalf("typed result messages = %#v", result)
+	}
+
+	for name, value := range map[string]any{
+		"scalar": "unchanged",
+		"mixed":  []any{map[string]any{"messageId": "ok"}, "not-a-message"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := projectChatMessageItems(value, nil); !reflect.DeepEqual(got, value) {
+				t.Fatalf("message items = %#v, want %#v", got, value)
+			}
+			if got := projectChatConversationMessageGroups(value); !reflect.DeepEqual(got, value) {
+				t.Fatalf("conversation groups = %#v, want %#v", got, value)
+			}
+		})
+	}
+}
+
 func TestCrossPlatformCoverageChatAtomicQuerySendStatusProjectsWorkflow(t *testing.T) {
 	const payload = `{"result":{"taskId":"task-1","openMessageId":"msg-1","openConversationId":"cid-1","status":"SUCCESS"},"traceId":"trace-1"}`
 	caller := &imReadResultCaller{responses: map[string]string{"query_message_send_status": payload}}
@@ -658,6 +721,23 @@ func TestCrossPlatformCoverageChatMessageListDryRunKeepsPreviewPath(t *testing.T
 	}
 	if preview["dry_run"] != true || preview["executed"] != false || preview["tool"] != "list_conversation_message_v2" {
 		t.Fatalf("dry-run preview = %#v", preview)
+	}
+
+	caller = &imReadResultCaller{dryRun: true}
+	got, err = executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand,
+		"message", "list-direct", "--user", "user-1", "--time", "2026-07-14 00:00:00")
+	if err != nil {
+		t.Fatalf("chat message list-direct dry-run returned error: %v", err)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("list-direct dry-run calls = %#v, want none", caller.calls)
+	}
+	preview = map[string]any{}
+	if err := json.Unmarshal([]byte(got), &preview); err != nil {
+		t.Fatalf("decode list-direct dry-run output: %v\noutput: %s", err, got)
+	}
+	if preview["dry_run"] != true || preview["executed"] != false || preview["tool"] != "list_individual_chat_message" {
+		t.Fatalf("list-direct dry-run preview = %#v", preview)
 	}
 }
 

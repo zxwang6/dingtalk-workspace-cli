@@ -114,14 +114,14 @@ func callProjectedChatPayload(
 		var cliErr *CLIError
 		if errors.As(err, &cliErr) && cliErr.Operation == "" {
 			withOperation := *cliErr
-			withOperation.Operation = serverID + "/" + toolName
+			withOperation.Operation = strings.TrimPrefix(serverID+"/"+toolName, "/")
 			return &withOperation
 		}
 		return err
 	}
 	if strings.TrimSpace(text) == "" {
 		return apperrors.NewAPI("MCP read tool returned no non-empty text content",
-			apperrors.WithOperation(serverID+"/"+toolName),
+			apperrors.WithOperation(strings.TrimPrefix(serverID+"/"+toolName, "/")),
 			apperrors.WithOrigin("mcp"),
 			apperrors.WithFailureStage("response_validation"),
 			apperrors.WithRetryable(true),
