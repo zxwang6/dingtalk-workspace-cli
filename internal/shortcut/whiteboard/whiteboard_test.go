@@ -143,6 +143,105 @@ func validWhiteboardUpdateResponse(mode string, requestIDs, realIDs []string, de
 	return string(envelope)
 }
 
+func validStandaloneWhiteboardQueryResponse(nodeID, view string, revision int, nodes string) string {
+	var decoded []any
+	if err := json.Unmarshal([]byte(nodes), &decoded); err != nil {
+		panic(err)
+	}
+	result, err := json.Marshal(map[string]any{
+		"schemaVersion": "1.0", "catalogVersion": "dml-v1",
+		"pages": []any{map[string]any{"id": "page-1", "nodes": decoded}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	envelope, err := json.Marshal(map[string]any{
+		"success": true, "nodeId": nodeID, "revision": revision, "view": view,
+		"resultJson": string(result),
+		"resultSummary": map[string]any{
+			"nodeCount": len(decoded), "pageCount": 1, "readOnlyNodeCount": 0,
+			"unknownNodeCount": 0, "resultBytes": len(result), "resultSha256": "0123456789abcdef",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(envelope)
+}
+
+func validStandaloneWhiteboardUpdateResponse(nodeID, mode string, previous, committed int, requestIDs, realIDs []string, deleted int) string {
+	idMap := make(map[string]any, len(requestIDs))
+	created := make([]any, len(realIDs))
+	for index := range requestIDs {
+		idMap[requestIDs[index]] = realIDs[index]
+		created[index] = realIDs[index]
+	}
+	envelope, err := json.Marshal(map[string]any{
+		"success": true, "nodeId": nodeID, "mode": mode, "pageId": "page-1",
+		"requestId":        "req-1",
+		"previousRevision": previous, "committedRevision": committed,
+		"createdNodeIds": created, "idMap": idMap, "deletedNodeCount": deleted,
+		"idempotentReplay": false, "message": "completed",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(envelope)
+}
+
+func TestCrossPlatformCoverageWhiteboardStandaloneStrictRoutingAndReadback(t *testing.T) {
+	queryCaller := &whiteboardCoverageCaller{responses: map[string][]string{
+		toolQueryStandalone: {validStandaloneWhiteboardQueryResponse("wb", "all", 12, `[{"id":"real-1","type":"text"}]`)},
+	}}
+	if err := runWhiteboardCoverage(t, Query, queryCaller, "", "--node", "wb", "--view", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if len(queryCaller.calls) != 1 || queryCaller.calls[0].tool != toolQueryStandalone || queryCaller.calls[0].args["partId"] != nil {
+		t.Fatalf("query calls = %#v", queryCaller.calls)
+	}
+
+	validSource := `{"source":{"schemaVersion":"1.0","catalogVersion":"dml-v1","nodes":[{"id":"n1","type":"text"}]}}`
+	updateCaller := &whiteboardCoverageCaller{responses: map[string][]string{
+		toolUpdateStandalone: {validStandaloneWhiteboardUpdateResponse("wb", "append", 12, 13, []string{"n1"}, []string{"real-1"}, 0)},
+		toolQueryStandalone:  {validStandaloneWhiteboardQueryResponse("wb", "page", 13, `[{"id":"real-1","type":"text"}]`)},
+	}}
+	if err := runWhiteboardCoverage(t, Update, updateCaller, "",
+		"--node", "wb", "--expected-revision", "12", "--request-id", "req-1", "--source", validSource, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(updateCaller.calls) != 2 || updateCaller.calls[0].tool != toolUpdateStandalone || updateCaller.calls[1].tool != toolQueryStandalone {
+		t.Fatalf("update calls = %#v", updateCaller.calls)
+	}
+	wantWrite := map[string]any{
+		"nodeId": "wb", "mode": "append", "nodes": `[{"id":"n1","type":"text"}]`,
+		"expectedRevision": 12, "requestId": "req-1",
+	}
+	if !reflect.DeepEqual(updateCaller.calls[0].args, wantWrite) {
+		t.Fatalf("write args = %#v, want %#v", updateCaller.calls[0].args, wantWrite)
+	}
+	if got := updateCaller.calls[1].args; got["nodeId"] != "wb" || got["view"] != "page" || got["pageId"] != "page-1" {
+		t.Fatalf("readback args = %#v", got)
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardRoutingNeverFallsBackAcrossKinds(t *testing.T) {
+	caller := &whiteboardCoverageCaller{responses: map[string][]string{}}
+	if err := runWhiteboardCoverage(t, Query, caller, "", "--node", "wb"); err == nil {
+		t.Fatal("missing standalone response unexpectedly succeeded")
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != toolQueryStandalone {
+		t.Fatalf("query fell back across kinds: %#v", caller.calls)
+	}
+
+	caller = &whiteboardCoverageCaller{responses: map[string][]string{}}
+	if err := runWhiteboardCoverage(t, Query, caller, "", "--node", "doc", "--part-id", ""); err == nil {
+		t.Fatal("explicit empty part unexpectedly succeeded")
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("explicit empty part reached remote call: %#v", caller.calls)
+	}
+}
+
 func TestCrossPlatformCoverageWhiteboardQueryRejectsFalseSuccessAndMalformedNodes(t *testing.T) {
 	broken := map[string]map[string]any{
 		"empty":                 {},

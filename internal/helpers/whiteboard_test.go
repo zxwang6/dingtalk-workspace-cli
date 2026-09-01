@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	outputpkg "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/output"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/testseam"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pkg/edition"
 )
@@ -116,6 +118,193 @@ func TestWhiteboardUpdateValidatesSourceAndRequiresConfirmation(t *testing.T) {
 	}
 	if caller.calls[0].args["mode"] != "append" || caller.calls[0].args["nodes"] != `[{"id":"n1","type":"text"}]` {
 		t.Fatalf("args = %#v", caller.calls[0].args)
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardQueryDeterministicallyRoutesBothKinds(t *testing.T) {
+	caller := &whiteboardTestCaller{format: "json"}
+	installWhiteboardTestCaller(t, caller)
+
+	cmd := newWhiteboardCommand()
+	cmd.SetArgs([]string{"query", "--node", "wb-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != standaloneWhiteboardQueryTool {
+		t.Fatalf("standalone calls = %#v", caller.calls)
+	}
+	if got := caller.calls[0].args; got["nodeId"] != "wb-1" || got["view"] != "summary" {
+		t.Fatalf("standalone args = %#v", got)
+	}
+
+	caller.calls = nil
+	cmd = newWhiteboardCommand()
+	cmd.SetArgs([]string{"query", "--node", "doc-1", "--part-id", "part-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != whiteboardQueryTool {
+		t.Fatalf("embedded calls = %#v", caller.calls)
+	}
+
+	for _, args := range [][]string{
+		{"query", "--node", "doc-1", "--part-id", ""},
+		{"query", "--node", "doc-1", "--part-id", "   "},
+		{"query", "--node", "doc-1", "--part-id", "part-1", "--view", "all"},
+	} {
+		caller.calls = nil
+		cmd = newWhiteboardCommand()
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("args %v unexpectedly succeeded", args)
+		}
+		if len(caller.calls) != 0 {
+			t.Fatalf("args %v reached remote calls %#v", args, caller.calls)
+		}
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardStandaloneUpdateRoutesExactCASArgs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "whiteboard.json")
+	if err := os.WriteFile(path, []byte(`{"overwrite":true,"source":{"schemaVersion":"1.0","catalogVersion":"dml-v1","nodes":[]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caller := &whiteboardTestCaller{format: "json"}
+	installWhiteboardTestCaller(t, caller)
+	cmd := newWhiteboardCommand()
+	cmd.SetArgs([]string{
+		"update", "--node", "wb-1", "--source", path, "--page-id", "page-1",
+		"--expected-revision", "12", "--request-id", "req-1", "--yes",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != standaloneWhiteboardUpdateTool {
+		t.Fatalf("calls = %#v", caller.calls)
+	}
+	want := map[string]any{
+		"nodeId": "wb-1", "mode": "overwrite", "nodes": "[]", "pageId": "page-1",
+		"expectedRevision": 12, "requestId": "req-1",
+	}
+	if !reflect.DeepEqual(caller.calls[0].args, want) {
+		t.Fatalf("args = %#v, want %#v", caller.calls[0].args, want)
+	}
+
+	for _, args := range [][]string{
+		{"update", "--node", "wb-1", "--source", path, "--page-id", "page-1", "--request-id", "req-1", "--yes"},
+		{"update", "--node", "wb-1", "--source", path, "--expected-revision", "12", "--request-id", "req-1", "--yes"},
+		{"update", "--node", "doc-1", "--part-id", "part-1", "--source", path, "--expected-revision", "12", "--yes"},
+	} {
+		caller.calls = nil
+		cmd = newWhiteboardCommand()
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("args %v unexpectedly succeeded", args)
+		}
+		if len(caller.calls) != 0 {
+			t.Fatalf("args %v reached remote calls %#v", args, caller.calls)
+		}
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardCreateWithContentValidatesAndRedactsDryRun(t *testing.T) {
+	contentPath := filepath.Join(t.TempDir(), "checkpoint.txt")
+	if err := os.WriteFile(contentPath, []byte("secret-checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caller := &whiteboardTestCaller{
+		format: "json",
+		response: func(whiteboardTestCall, int) string {
+			// Captured from the pre-release whiteboard gateway. The HSF result
+			// declares richer verification fields, but the currently published
+			// projection omits them and serializes revision as a string.
+			return `{"docUrl":"https://pre-alidocs.dingtalk.com/i/nodes/wb-new","folderId":"folder-1","logId":"trace-1","mobileUrl":"https://pre-alidocs.dingtalk.com/i/nodes/wb-new","name":"Board.adraw","nodeId":"wb-new","revision":"0","success":true}`
+		},
+	}
+	output := installWhiteboardTestCaller(t, caller)
+	cmd := newWhiteboardCommand()
+	ctx, _ := outputpkg.WithResultStore(context.Background())
+	cmd.SetContext(ctx)
+	cmd.SetOut(output)
+	cmd.SetArgs([]string{"create-with-content", "--name", "Board", "--content", contentPath, "--request-id", "create-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	leaf, _, err := cmd.Find([]string{"create-with-content"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, emitted, err := outputpkg.EmitStoredResult(leaf); err != nil || !emitted {
+		t.Fatalf("emit real result: emitted=%v err=%v", emitted, err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != standaloneWhiteboardCreateTool || caller.calls[0].args["content"] != "secret-checkpoint" {
+		t.Fatalf("calls = %#v", caller.calls)
+	}
+	var created map[string]any
+	if err := json.Unmarshal(output.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	createdData, _ := created["data"].(map[string]any)
+	if createdData["nodeId"] != "wb-new" || createdData["revision"] != float64(0) {
+		t.Fatalf("pre-release create result was not normalized: %s", output.String())
+	}
+
+	caller = &whiteboardTestCaller{format: "json", dry: true}
+	output = installWhiteboardTestCaller(t, caller)
+	cmd = newWhiteboardCommand()
+	ctx, _ = outputpkg.WithResultStore(context.Background())
+	cmd.SetContext(ctx)
+	cmd.SetOut(output)
+	cmd.SetArgs([]string{"create-with-content", "--name", "Board", "--content", contentPath, "--request-id", "create-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	leaf, _, err = cmd.Find([]string{"create-with-content"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, emitted, err := outputpkg.EmitStoredResult(leaf); err != nil || !emitted {
+		t.Fatalf("emit dry-run result: emitted=%v err=%v", emitted, err)
+	}
+	var preview map[string]any
+	if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := preview["data"].(map[string]any)
+	if len(caller.calls) != 0 || strings.Contains(output.String(), "secret-checkpoint") || data["contentBytes"] != float64(17) {
+		t.Fatalf("dry-run calls=%#v output=%s", caller.calls, output.String())
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardCreateReceiptRejectsExplicitContradictions(t *testing.T) {
+	tests := []struct {
+		name     string
+		response map[string]any
+	}{
+		{name: "missing node", response: map[string]any{"success": true, "revision": "0"}},
+		{name: "missing revision", response: map[string]any{"success": true, "nodeId": "wb"}},
+		{name: "negative revision", response: map[string]any{"success": true, "nodeId": "wb", "revision": "-1"}},
+		{name: "wrong content type", response: map[string]any{"success": true, "nodeId": "wb", "revision": "0", "contentType": "DOC"}},
+		{name: "content not applied", response: map[string]any{"success": true, "nodeId": "wb", "revision": "0", "requestedContentApplied": false}},
+		{name: "request mismatch", response: map[string]any{"success": true, "nodeId": "wb", "revision": "0", "requestMatched": false}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateStandaloneWhiteboardCreateResponse(test.response); err == nil || !strings.Contains(err.Error(), "成功回执字段不符合约定") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+
+	response := map[string]any{
+		"success": true,
+		"result": map[string]any{
+			"nodeId": "wb", "revision": json.Number("7"), "contentType": "wbd",
+			"requestedContentApplied": true, "requestMatched": true,
+		},
+	}
+	if err := validateStandaloneWhiteboardCreateResponse(response); err != nil {
+		t.Fatal(err)
 	}
 }
 

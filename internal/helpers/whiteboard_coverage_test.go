@@ -179,7 +179,8 @@ func TestWhiteboardCommandValidationBranches(t *testing.T) {
 	caller := &whiteboardTestCaller{format: "json"}
 	installWhiteboardTestCaller(t, caller)
 	for _, args := range [][]string{
-		{"query", "--node", "n"},
+		{"query", "--node", "n", "--view", "page"},
+		{"query", "--node", "n", "--part-id", ""},
 		{"query", "--node", "n", "--part-id", "p", "--jq", "."},
 		{"update", "--node", "n", "--part-id", "p"},
 		{"update", "--node", "n", "--part-id", "p", "--fields", "result"},
