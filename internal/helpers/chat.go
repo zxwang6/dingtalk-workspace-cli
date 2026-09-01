@@ -104,9 +104,6 @@ func callProjectedChatPayload(
 	project func(map[string]any) map[string]any,
 ) error {
 	if deps.Caller.DryRun() {
-		if serverID == "" {
-			return callMCPTool(toolName, args)
-		}
 		return callMCPToolOnServer(serverID, toolName, args)
 	}
 	text, err := callMCPToolReturnTextOnServer(cmd.Context(), serverID, toolName, args)
@@ -3365,7 +3362,7 @@ func newChatCommand() *cobra.Command {
 			if v, err := cmd.Flags().GetInt("limit"); err == nil && v > 0 {
 				toolArgs["limit"] = v
 			}
-			return callProjectedAtomicChatMessages(cmd, "", "list_individual_chat_message", toolArgs)
+			return callProjectedAtomicChatMessages(cmd, "chat", "list_individual_chat_message", toolArgs)
 		},
 	}
 	DeclareLeafMetadata(chatMessageListDirectCmd, LeafSpec{
@@ -4197,7 +4194,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-all --start "2025-03-01 00:00:00" --end "2025-03-31 23:59:59" --limit 50 --cursor "abc123token"
   dws chat message list-all --start "2025-03-01 00:00:00" --end "2025-03-31 23:59:59" --limit 100 --page-all --page-limit 20 --max-items 500 --page-delay 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
 				pagedChatConversationMessagesConfig("search_messages_by_time_range", chatMessageListAllArgs)))
 		},
 	}
@@ -4248,7 +4245,7 @@ func newChatCommand() *cobra.Command {
   # 查询 userId: dws contact user search --query "姓名"
   # 查询 openDingTalkId: dws contact user search --query "姓名"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
 				pagedChatConversationMessagesConfig("search_messages_by_sender", chatMessageListBySenderArgs)))
 		},
 	}
@@ -4299,7 +4296,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-mentions --conversation-id <openconversation_id> --start "2026-03-10T00:00:00+08:00" --end "2026-03-11T00:00:00+08:00" --limit 50 --page-all --max-items 200 --page-delay 0
   # 查询群 ID: dws chat search --query "群名"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
 				pagedChatConversationMessagesConfig("search_at_me_message", chatMessageListMentionsArgs)))
 		},
 	}
@@ -4347,7 +4344,7 @@ func newChatCommand() *cobra.Command {
   dws chat message list-focused --limit 20 --cursor <nextCursor>
   dws chat message list-focused --limit 50 --page-all --page-limit 10 --page-delay 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "",
+			return RunPagedMCPCommand(cmd, pagedProjectedAtomicChatMessagesConfig(cmd, "chat",
 				pagedChatMessagesInt64Config("list_special_focus_messages", chatMessageListFocusedArgs)))
 		},
 	}

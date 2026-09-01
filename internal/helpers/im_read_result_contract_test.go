@@ -103,8 +103,11 @@ func TestCrossPlatformCoverageChatMessageReadsPreserveToolOperationOnCallerError
 	if err == nil {
 		t.Fatalf("chat message list-direct unexpectedly succeeded with output %q", got)
 	}
-	if !errors.As(err, &cliErr) || cliErr.Operation != "list_individual_chat_message" {
+	if !errors.As(err, &cliErr) || cliErr.Operation != "chat/list_individual_chat_message" {
 		t.Fatalf("chat message list-direct error = %#v", err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0] != (imReadResultCall{productID: "chat", toolName: "list_individual_chat_message"}) {
+		t.Fatalf("chat message list-direct calls = %#v, want chat/list_individual_chat_message", caller.calls)
 	}
 }
 
@@ -317,6 +320,7 @@ func TestCrossPlatformCoverageChatMessageSearchProjectsStableFieldsAndPreservesL
 func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t *testing.T) {
 	tests := []struct {
 		name     string
+		serverID string
 		toolName string
 		args     []string
 		payload  string
@@ -324,6 +328,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 	}{
 		{
 			name:     "direct list",
+			serverID: "chat",
 			toolName: "list_individual_chat_message",
 			args:     []string{"message", "list-direct", "--user", "user-1", "--time", "2026-07-14 00:00:00"},
 			payload:  `{"result":{"messages":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}}`,
@@ -333,6 +338,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "all messages",
+			serverID: "chat",
 			toolName: "search_messages_by_time_range",
 			args:     []string{"message", "list-all"},
 			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","title":"项目群","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
@@ -340,6 +346,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "messages by sender",
+			serverID: "chat",
 			toolName: "search_messages_by_sender",
 			args:     []string{"message", "list-by-sender", "--sender-user-id", "user-1"},
 			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
@@ -347,6 +354,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "mentions",
+			serverID: "chat",
 			toolName: "search_at_me_message",
 			args:     []string{"message", "list-mentions"},
 			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
@@ -354,6 +362,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "focused messages",
+			serverID: "chat",
 			toolName: "list_special_focus_messages",
 			args:     []string{"message", "list-focused"},
 			payload:  `{"result":{"messages":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}],"hasMore":false}}`,
@@ -363,6 +372,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "advanced search",
+			serverID: "im",
 			toolName: "search_messages",
 			args:     []string{"message", "search-advanced", "--query", "正文"},
 			payload:  `{"result":{"conversationMessagesList":[{"openConversationId":"cid-1","messages":[{"openMessageId":"msg-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}],"hasMore":false}}`,
@@ -370,6 +380,7 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 		},
 		{
 			name:     "messages by ids",
+			serverID: "im",
 			toolName: "list_messages_by_ids",
 			args:     []string{"message", "list-by-ids", "--msg-ids", "msg-1"},
 			payload:  `{"result":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}`,
@@ -385,6 +396,9 @@ func TestCrossPlatformCoverageChatAtomicMessageReadsProjectExistingCollections(t
 			got, err := executeIMReadCommand(t, caller, []string{"dws", "chat"}, newChatCommand, tt.args...)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(caller.calls) != 1 || caller.calls[0] != (imReadResultCall{productID: tt.serverID, toolName: tt.toolName}) {
+				t.Fatalf("calls = %#v, want %s/%s", caller.calls, tt.serverID, tt.toolName)
 			}
 			var payload map[string]any
 			if err := json.Unmarshal([]byte(got), &payload); err != nil {
