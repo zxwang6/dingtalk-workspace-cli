@@ -123,7 +123,7 @@ func updateResultSpec() *contract.ResultSpec {
 							"properties":{
 								"message":{"type":"string","minLength":1,"description":"服务端终态说明"},
 								"createdNodeIds":{"type":"array","description":"按请求节点顺序返回的真实节点身份；清空时为空数组","items":{"type":"string","minLength":1}},
-								"idMap":{"type":"object","description":"请求临时节点身份到真实节点身份的映射；清空时为空对象","additionalProperties":{"type":"string","minLength":1}},
+								"idMap":{"type":"object","description":"请求临时节点身份到真实节点身份的映射；旧版稀疏回执省略时由 CLI 按有序 createdNodeIds 安全重建；清空时为空对象","additionalProperties":{"type":"string","minLength":1}},
 								"deletedNodeCount":{"type":"integer","minimum":0,"description":"本次 overwrite 删除的页面自有节点数；append 为零"},
 								"pageId":{"type":"string","description":"独立白板实际更新页 ID"},
 								"requestId":{"type":"string","description":"独立白板稳定幂等请求 ID"},
@@ -868,10 +868,23 @@ func requireStandaloneWhiteboardUpdateReceipt(data, request map[string]any, expe
 	if wantedPage, present := request["pageId"].(string); present && strings.TrimSpace(wantedPage) != pageID {
 		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "receipt_page_mismatch", "独立白板写回执 pageId 与请求不一致")
 	}
-	wantedRequestID, _ := request["requestId"].(string)
-	requestID, ok := nonEmptyString(receipt["requestId"])
-	if !ok || requestID != strings.TrimSpace(wantedRequestID) {
-		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "receipt_request_mismatch", "独立白板写回执 requestId 与请求幂等键不一致")
+	wantedRequestID, ok := nonEmptyString(request["requestId"])
+	if !ok {
+		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "invalid_request_id_state", "独立白板写请求缺少有效的 requestId")
+	}
+	// requestId was originally input-only in the standalone whiteboard Tool
+	// contract. Accept an omitted echo for compatibility with those servers,
+	// but reject malformed or mismatched echoes when the field is present.
+	requestID := wantedRequestID
+	if rawRequestID, present := receipt["requestId"]; present {
+		echoedRequestID, valid := nonEmptyString(rawRequestID)
+		if !valid {
+			return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "malformed_receipt_request_id", "独立白板写回执 requestId 必须是非空字符串")
+		}
+		if echoedRequestID != wantedRequestID {
+			return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "receipt_request_mismatch", "独立白板写回执 requestId 与请求幂等键不一致")
+		}
+		requestID = echoedRequestID
 	}
 	previous, ok := nonNegativeInt(receipt["previousRevision"])
 	wantedRevision, wantedOK := request["expectedRevision"].(int)
@@ -889,18 +902,30 @@ func requireStandaloneWhiteboardUpdateReceipt(data, request map[string]any, expe
 	if len(created) != len(expected.Nodes) {
 		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "receipt_count_mismatch", "createdNodeIds 数量与请求节点数不一致")
 	}
-	idMapValue, ok := receipt["idMap"].(map[string]any)
-	if !ok {
-		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "malformed_id_map", "idMap 必须是显式对象")
-	}
-	idMap := make(map[string]string, len(idMapValue))
-	for key, raw := range idMapValue {
-		requestID := strings.TrimSpace(key)
-		realID, valid := nonEmptyString(raw)
-		if requestID == "" || !valid {
-			return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "malformed_id_map", "idMap 含空请求或真实节点身份")
+	idMap := make(map[string]string, len(expected.Nodes))
+	idMapValue, present := receipt["idMap"]
+	if !present || idMapValue == nil {
+		// Older standalone Tool versions returned ordered createdNodeIds but
+		// omitted idMap. The response contract defines createdNodeIds in request
+		// order, so an exact count lets us reconstruct the same mapping without
+		// weakening the subsequent readback verification.
+		for index, node := range expected.Nodes {
+			requestNodeID, _ := nonEmptyString(node["id"])
+			idMap[requestNodeID] = created[index]
 		}
-		idMap[requestID] = realID
+	} else {
+		explicitIDMap, valid := idMapValue.(map[string]any)
+		if !valid {
+			return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "malformed_id_map", "idMap 必须是对象、null 或省略")
+		}
+		for key, raw := range explicitIDMap {
+			requestID := strings.TrimSpace(key)
+			realID, valid := nonEmptyString(raw)
+			if requestID == "" || !valid {
+				return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "malformed_id_map", "idMap 含空请求或真实节点身份")
+			}
+			idMap[requestID] = realID
+		}
 	}
 	if len(idMap) != len(expected.Nodes) {
 		return nil, responsecheck.Error(serverWhiteboard+"/"+toolUpdateStandalone, "receipt_count_mismatch", "idMap 数量与请求节点数不一致")

@@ -90,6 +90,40 @@ func TestWhiteboardQueryRoutesAndDecodesResultJSON(t *testing.T) {
 	}
 }
 
+func TestCrossPlatformCoverageWhiteboardStandaloneQueryPromotesResultJSONToSource(t *testing.T) {
+	caller := &whiteboardTestCaller{
+		format: "json",
+		response: func(whiteboardTestCall, int) string {
+			return `{"success":true,"nodeId":"wb-1","revision":2,"view":"all","resultJson":"{\"schemaVersion\":\"1.0\",\"catalogVersion\":\"dml-v1\",\"pages\":[{\"id\":\"page\",\"nodes\":[]}]}","resultSummary":{"pageCount":1,"nodeCount":0}}`
+		},
+	}
+	output := installWhiteboardTestCaller(t, caller)
+	cmd := newWhiteboardCommand()
+	cmd.SetArgs([]string{"query", "--node", "wb-1", "--view", "all"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != standaloneWhiteboardQueryTool {
+		t.Fatalf("calls = %#v", caller.calls)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
+		t.Fatalf("output = %q: %v", output.String(), err)
+	}
+	source, ok := payload["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("source was not projected: %#v", payload)
+	}
+	resultJSON, ok := payload["resultJson"].(map[string]any)
+	if !ok || !reflect.DeepEqual(resultJSON, source) {
+		t.Fatalf("decoded resultJson = %#v, source = %#v", resultJSON, source)
+	}
+	pages, ok := source["pages"].([]any)
+	if !ok || len(pages) != 1 || pages[0].(map[string]any)["id"] != "page" {
+		t.Fatalf("source.pages = %#v", source["pages"])
+	}
+}
+
 func TestWhiteboardUpdateValidatesSourceAndRequiresConfirmation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "whiteboard.json")
 	if err := os.WriteFile(path, []byte(`{"overwrite":false,"source":{"schemaVersion":"1.0","catalogVersion":"dml-v1","nodes":[{"id":"n1","type":"text"}]}}`), 0o600); err != nil {

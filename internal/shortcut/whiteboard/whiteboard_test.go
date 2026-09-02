@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/corecmd"
+	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/helpers"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/output"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/shortcut"
@@ -178,7 +180,6 @@ func validStandaloneWhiteboardUpdateResponse(nodeID, mode string, previous, comm
 	}
 	envelope, err := json.Marshal(map[string]any{
 		"success": true, "nodeId": nodeID, "mode": mode, "pageId": "page-1",
-		"requestId":        "req-1",
 		"previousRevision": previous, "committedRevision": committed,
 		"createdNodeIds": created, "idMap": idMap, "deletedNodeCount": deleted,
 		"idempotentReplay": false, "message": "completed",
@@ -187,6 +188,102 @@ func validStandaloneWhiteboardUpdateResponse(nodeID, mode string, previous, comm
 		panic(err)
 	}
 	return string(envelope)
+}
+
+func TestCrossPlatformCoverageWhiteboardStandaloneReceiptRequestIDCompatibility(t *testing.T) {
+	expected, err := parseWhiteboardSource(`{"source":{"schemaVersion":"1.0","catalogVersion":"dml-v1","nodes":[{"id":"n1","type":"text"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := map[string]any{
+		"nodeId": "wb", "mode": "append", "expectedRevision": 12, "requestId": "req-1",
+	}
+	baseReceipt := func() map[string]any {
+		return map[string]any{
+			"success": true, "nodeId": "wb", "mode": "append", "pageId": "page-1",
+			"previousRevision": 12, "committedRevision": 13,
+			"createdNodeIds": []any{"real-1"}, "idMap": map[string]any{"n1": "real-1"},
+			"deletedNodeCount": 0, "idempotentReplay": false, "message": "completed",
+		}
+	}
+
+	withoutEcho, err := requireStandaloneWhiteboardUpdateReceipt(baseReceipt(), request, expected)
+	if err != nil {
+		t.Fatalf("response without requestId echo was rejected: %v", err)
+	}
+	if withoutEcho.RequestID != "req-1" {
+		t.Fatalf("requestId fallback=%q, want req-1", withoutEcho.RequestID)
+	}
+
+	matching := baseReceipt()
+	matching["requestId"] = "req-1"
+	withEcho, err := requireStandaloneWhiteboardUpdateReceipt(matching, request, expected)
+	if err != nil || withEcho.RequestID != "req-1" {
+		t.Fatalf("matching requestId echo receipt=%#v err=%v", withEcho, err)
+	}
+
+	mismatched := baseReceipt()
+	mismatched["requestId"] = "req-other"
+	if _, err := requireStandaloneWhiteboardUpdateReceipt(mismatched, request, expected); !hasWhiteboardErrorReason(err, "receipt_request_mismatch") {
+		t.Fatalf("mismatched requestId error=%v", err)
+	}
+
+	for name, value := range map[string]any{"null": nil, "blank": " ", "wrong type": 1} {
+		t.Run(name, func(t *testing.T) {
+			malformed := baseReceipt()
+			malformed["requestId"] = value
+			if _, err := requireStandaloneWhiteboardUpdateReceipt(malformed, request, expected); !hasWhiteboardErrorReason(err, "malformed_receipt_request_id") {
+				t.Fatalf("malformed requestId error=%v", err)
+			}
+		})
+	}
+}
+
+func TestCrossPlatformCoverageWhiteboardStandaloneReceiptIDMapCompatibility(t *testing.T) {
+	expected, err := parseWhiteboardSource(`{"overwrite":true,"source":{"schemaVersion":"1.0","catalogVersion":"dml-v1","nodes":[{"id":"n1","type":"text"},{"id":"n2","type":"shape"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := map[string]any{
+		"nodeId": "wb", "mode": "overwrite", "pageId": "page",
+		"expectedRevision": 2, "requestId": "req-1",
+	}
+	baseReceipt := func() map[string]any {
+		return map[string]any{
+			"success": true, "nodeId": "wb", "mode": "overwrite", "pageId": "page",
+			"previousRevision": 2, "committedRevision": 3,
+			"createdNodeIds": []any{"real-1", "real-2"}, "deletedNodeCount": 57,
+			"idempotentReplay": false, "message": "done",
+		}
+	}
+
+	for _, value := range []any{"missing", nil} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			receipt := baseReceipt()
+			if value == nil {
+				receipt["idMap"] = nil
+			}
+			got, err := requireStandaloneWhiteboardUpdateReceipt(receipt, request, expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{"n1": "real-1", "n2": "real-2"}
+			if !reflect.DeepEqual(got.IDMap, want) {
+				t.Fatalf("derived idMap = %#v, want %#v", got.IDMap, want)
+			}
+		})
+	}
+
+	malformed := baseReceipt()
+	malformed["idMap"] = []any{}
+	if _, err := requireStandaloneWhiteboardUpdateReceipt(malformed, request, expected); !hasWhiteboardErrorReason(err, "malformed_id_map") {
+		t.Fatalf("malformed idMap error=%v", err)
+	}
+}
+
+func hasWhiteboardErrorReason(err error, reason string) bool {
+	var structured *apperrors.Error
+	return errors.As(err, &structured) && structured.Reason == reason
 }
 
 func TestCrossPlatformCoverageWhiteboardStandaloneStrictRoutingAndReadback(t *testing.T) {

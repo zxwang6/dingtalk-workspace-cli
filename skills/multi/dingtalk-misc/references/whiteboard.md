@@ -40,6 +40,10 @@ Reference；只有操作页仍缺少具体字段时，才读取一份精确协�
   `--verbose` 或 commit-unknown 不重放；commit-unknown 按同一稳定目标 query 对账。
 - 先用单次响应完整校验，再无损投影；ID、mode、verified、节点摘要和链接只是最小
   集合，用户要求及后续操作依赖的几何、样式、文本、关系必须保留。
+- `get_whiteboard_detail` 的 `resultJson` 是 JSON 字符串，解析后的对象就是 OpenNodes
+  `source`。原子 `whiteboard query --view all/page` 保留已解码的 `resultJson` 并提供
+  等价的顶层 `source`；严格 `+query` 使用统一结果 envelope，路径是 `data.source`。页面 ID 必须从
+  `source.pages[].id` 取得，不能因为读取错了 envelope 层级就猜测或硬编码 pageId。
 - 投影只减少重复上下文，不删除业务信息：query/export/audit 需要完整快照时原样
   交付；写入 `source` 保留在 Payload 文件中，不得因丢字段而重发远端请求。
 

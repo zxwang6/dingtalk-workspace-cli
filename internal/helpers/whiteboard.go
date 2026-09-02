@@ -389,17 +389,36 @@ func callWhiteboardToolResult(cmd *cobra.Command, toolName string, args map[stri
 		return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("response must be a JSON object"))
 	}
 
-	if encoded, ok := response["resultJson"].(string); ok && strings.TrimSpace(encoded) != "" {
-		var result any
-		resultDecoder := json.NewDecoder(strings.NewReader(encoded))
-		resultDecoder.UseNumber()
-		if err := resultDecoder.Decode(&result); err != nil {
-			return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("invalid resultJson: %w", err))
+	if raw, present := response["resultJson"]; present && raw != nil {
+		result := raw
+		if encoded, ok := raw.(string); ok {
+			if strings.TrimSpace(encoded) == "" {
+				return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("resultJson must not be blank"))
+			}
+			resultDecoder := json.NewDecoder(strings.NewReader(encoded))
+			resultDecoder.UseNumber()
+			if err := resultDecoder.Decode(&result); err != nil {
+				return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("invalid resultJson: %w", err))
+			}
+			if err := ensureWhiteboardJSONEOF(resultDecoder); err != nil {
+				return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("invalid resultJson: %w", err))
+			}
 		}
-		if err := ensureWhiteboardJSONEOF(resultDecoder); err != nil {
-			return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("invalid resultJson: %w", err))
+		if toolName == standaloneWhiteboardQueryTool {
+			object, ok := result.(map[string]any)
+			if !ok || len(object) == 0 {
+				return nil, invalidWhiteboardToolResult(toolName, fmt.Errorf("resultJson must be a non-empty JSON object"))
+			}
+			// Standalone query returns the OpenNodes snapshot as an encoded
+			// resultJson. Promote the decoded value to the public source field so
+			// page/all callers can consume source.pages without knowing the HSF
+			// transport representation. Keep the decoded resultJson alias for
+			// compatibility with callers that already consume the native output.
+			response["resultJson"] = object
+			response["source"] = object
+		} else {
+			response["resultJson"] = result
 		}
-		response["resultJson"] = result
 	}
 	return response, nil
 }
